@@ -151,20 +151,6 @@ The platform auto-confirms delivery after 10 minutes to protect runners from buy
 
 ---
 
-## Portfolio context
-
-> *"Ovn taught me how to build a marketplace. Lil Outing taught me how to make one people actually trust."*
-
-| Ovn | Lil Outing |
-|---|---|
-| Email auth | Supabase Auth + session management |
-| Static listings | Real-time 7-state machine |
-| No payments | Stripe escrow flow |
-| Single role | Dual role, single unified flow |
-| No disputes | Full trust & safety system |
-| Simple schema | Event sourcing + crowdsourced data |
-
----
 
 ## Running locally
 

@@ -197,11 +197,19 @@ export default function ActiveRunPage() {
         )}
 
         {request.status === 'delivered' && (
-          <div className="bg-sage/20 rounded-2xl p-4 text-center">
-            <p className="text-sm text-charcoal font-medium mb-1">Waiting for buyer to confirm 🎉</p>
-            <p className="text-xs text-muted">Auto-confirms in 10 minutes</p>
-          </div>
-        )}
+            <div className="flex flex-col gap-3">
+                <div className="bg-sage/20 rounded-2xl p-4 text-center">
+                <p className="text-sm text-charcoal font-medium mb-1">Waiting for buyer to confirm 🎉</p>
+                <p className="text-xs text-muted">Auto-confirms in 10 minutes</p>
+                </div>
+                <button
+                onClick={() => router.push('/')}
+                className="w-full bg-cream text-charcoal py-4 rounded-2xl font-medium text-sm"
+                >
+                Back to feed →
+                </button>
+            </div>
+            )}
       </div>
     </main>
   )

@@ -24,31 +24,35 @@ export default function SignupPage() {
     setError('')
 
     const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
+        email,
+        password,
     })
 
     if (signUpError || !data.user) {
-      setError(signUpError?.message ?? 'Something went wrong')
-      setLoading(false)
-      return
+        setError(signUpError?.message ?? 'Something went wrong')
+        setLoading(false)
+        return
     }
 
     const { error: profileError } = await supabase.from('users').insert({
-      id: data.user.id,
-      email,
-      full_name: fullName,
-      neighborhood,
+        id: data.user.id,
+        email,
+        full_name: fullName,
+        neighborhood,
+        rating_as_runner: 5.0,
+        rating_as_buyer: 5.0,
     })
 
     if (profileError) {
-      setError(profileError.message)
-      setLoading(false)
-      return
+        setError(profileError.message)
+        setLoading(false)
+        return
     }
 
+    // Small delay to let auth state settle before redirect
+    await new Promise(resolve => setTimeout(resolve, 500))
     router.push('/')
-  }
+    }
 
   return (
     <main className="min-h-screen bg-warm-white flex flex-col">

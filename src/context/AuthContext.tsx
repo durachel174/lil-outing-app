@@ -40,15 +40,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  async function fetchProfile(userId: string) {
-    const { data } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    if (data) setProfile(data as AppUser)
+  async function fetchProfile(userId: string, retries = 3) {
+  const { data } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', userId)
+    .single()
+
+  if (data) {
+    setProfile(data as AppUser)
+    setLoading(false)
+  } else if (retries > 0) {
+    // Profile might not be inserted yet — retry after delay
+    await new Promise(resolve => setTimeout(resolve, 800))
+    fetchProfile(userId, retries - 1)
+  } else {
     setLoading(false)
   }
+}
 
   return (
     <AuthContext.Provider value={{ session, profile, loading }}>

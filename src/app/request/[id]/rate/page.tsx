@@ -14,56 +14,58 @@ export default function RatePage() {
   const [submitting, setSubmitting] = useState(false)
 
   async function handleSubmit() {
-    if (!session || rating === 0) return
-    setSubmitting(true)
+  if (!session || rating === 0) return
+  setSubmitting(true)
 
-    // Get the request to find the other party
-    const { data: request } = await supabase
-      .from('requests')
-      .select('buyer_id, runner_id')
-      .eq('id', id)
-      .single()
+  const { data: request } = await supabase
+    .from('requests')
+    .select('buyer_id, runner_id')
+    .eq('id', id)
+    .single()
 
-    if (!request) { setSubmitting(false); return }
+  if (!request) { setSubmitting(false); return }
 
-    const isBuyer = session.user.id === request.buyer_id
-    const rateeId = isBuyer ? request.runner_id : request.buyer_id
-    const role = isBuyer ? 'buyer_rating_runner' : 'runner_rating_buyer'
-    const ratingField = isBuyer ? 'rating_as_runner' : 'rating_as_buyer'
+  const isBuyer = session.user.id === request.buyer_id
+  const rateeId = isBuyer ? request.runner_id : request.buyer_id
+  const role = isBuyer ? 'buyer_rating_runner' : 'runner_rating_buyer'
+  const ratingField = isBuyer ? 'rating_as_runner' : 'rating_as_buyer'
+  const countField = isBuyer ? 'total_runs' : 'total_requests'
 
-    // Insert rating
-    await supabase.from('ratings').insert({
-      request_id: id,
-      rater_id: session.user.id,
-      ratee_id: rateeId,
-      role,
-      score: rating,
-      note: note.trim() || null,
-    })
+  // Insert rating row
+  const { error: ratingError } = await supabase.from('ratings').insert({
+    request_id: id,
+    rater_id: session.user.id,
+    ratee_id: rateeId,
+    role,
+    score: rating,
+    note: note.trim() || null,
+  })
+  console.log('rating insert error:', ratingError)
 
-    // Update user's average rating
+  // Fetch all ratings and average them, with seed 5.0 baked in
     const { data: allRatings } = await supabase
-      .from('ratings')
-      .select('score')
-      .eq('ratee_id', rateeId)
-      .eq('role', role)
+    .from('ratings')
+    .select('score')
+    .eq('ratee_id', rateeId)
+    .eq('role', role)
 
-    if (allRatings && allRatings.length > 0) {
-      const avg = allRatings.reduce((sum, r) => sum + r.score, 0) / allRatings.length
-      await supabase
-        .from('users')
-        .update({ [ratingField]: avg })
-        .eq('id', rateeId)
-    }
+    const totalScore = (allRatings ?? []).reduce((sum, r) => sum + r.score, 0) + 5
+    const totalCount = (allRatings ?? []).length + 1
+    const newAvg = totalScore / totalCount
 
-    // Mark request as completed
     await supabase
-      .from('requests')
-      .update({ status: 'completed' })
-      .eq('id', id)
+    .from('users')
+    .update({ [ratingField]: Math.round(newAvg * 10) / 10 })
+    .eq('id', rateeId)
 
-    router.push('/')
-  }
+  // Mark request completed
+  await supabase
+    .from('requests')
+    .update({ status: 'completed' })
+    .eq('id', id)
+
+  router.push('/')
+}
 
   return (
     <main className="min-h-screen bg-warm-white flex flex-col px-6 pt-14 pb-24">

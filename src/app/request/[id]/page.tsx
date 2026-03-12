@@ -227,6 +227,16 @@ export default function RequestDetailPage() {
             <p className="text-sm text-charcoal">This request has already been claimed</p>
           </div>
         )}
+
+        {/* Buyer confirm + rate button */}
+        {session?.user.id === request.buyer_id && request.status === 'delivered' && (
+        <button
+            onClick={() => router.push(`/request/${request.id}/rate`)}
+            className="w-full bg-terracotta text-cream py-4 rounded-2xl font-medium text-sm"
+        >
+            Confirm delivery & rate runner →
+        </button>
+        )}
       </div>
     </main>
   )

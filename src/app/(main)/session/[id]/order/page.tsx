@@ -17,6 +17,7 @@ export default function SessionOrderPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [goodsEstimate, setGoodsEstimate] = useState(15)
 
   useEffect(() => {
     fetchSession()
@@ -45,7 +46,7 @@ export default function SessionOrderPage() {
       description,
       location_name: runnerSession.location_name,
       offer_amount: offerAmount,
-      goods_estimate: 0,
+      goods_estimate: goodsEstimate,
       runner_session_id: id,
       initiation_type: 'runner_initiated',
       status: 'claimed',
@@ -151,6 +152,34 @@ export default function SessionOrderPage() {
             <span className="text-xs text-muted">$5</span>
             <span className="text-xs text-muted">$50</span>
           </div>
+        </div>
+
+        {/* Goods budget */}
+        <div className="bg-cream rounded-3xl p-5">
+        <p className="text-xs text-muted uppercase tracking-wider mb-3">Goods budget</p>
+        <p className="text-sm text-muted mb-3">How much should the runner spend on your items?</p>
+        <div className="flex items-center justify-between mb-3">
+            <span className="text-sm text-muted">Estimated total</span>
+            <span
+            className="font-playfair text-2xl italic text-terracotta"
+            style={{ fontFamily: 'var(--font-playfair)' }}
+            >
+            ${goodsEstimate}
+            </span>
+        </div>
+        <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={goodsEstimate}
+            onChange={e => setGoodsEstimate(Number(e.target.value))}
+            className="w-full accent-terracotta"
+        />
+        <div className="flex justify-between mt-1">
+            <span className="text-xs text-muted">$0</span>
+            <span className="text-xs text-muted">$100</span>
+        </div>
         </div>
 
         {error && (

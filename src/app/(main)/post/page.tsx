@@ -30,6 +30,7 @@ export default function PostRequestPage() {
   const [expiresIn, setExpiresIn] = useState('60')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [locationPrices, setLocationPrices] = useState<Record<string, number>>({})
 
   
 
@@ -46,6 +47,29 @@ export default function PostRequestPage() {
   function removeItem(index: number) {
     setItems(items.filter((_, i) => i !== index))
   }
+
+  async function fetchLocationPrices(location: string) {
+    if (!location) return
+    const keyword = location.toLowerCase().trim().split(' ')[0]
+    const { data } = await supabase
+    .from('item_prices')
+    .select('item_name_normalized, price')
+    .ilike('location_name', `%${keyword}%`)
+    
+    if (data && data.length > 0) {
+        // Average prices per item
+        const priceMap: Record<string, number[]> = {}
+        data.forEach(row => {
+        if (!priceMap[row.item_name_normalized]) priceMap[row.item_name_normalized] = []
+        priceMap[row.item_name_normalized].push(row.price)
+        })
+        const avgMap: Record<string, number> = {}
+        Object.entries(priceMap).forEach(([key, prices]) => {
+        avgMap[key] = Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100
+        })
+        setLocationPrices(avgMap)
+    }
+    }
 
   async function handleSubmit() {
     if (!session) {
@@ -180,7 +204,10 @@ export default function PostRequestPage() {
               <input
                 type="text"
                 value={locationName}
-                onChange={(e) => setLocationName(e.target.value)}
+                onChange={(e) => {
+                    setLocationName(e.target.value)
+                    fetchLocationPrices(e.target.value)
+                }}
                 placeholder="e.g. Arsicault Bakery"
                 className="w-full bg-cream border border-sand rounded-2xl px-4 py-3.5 text-charcoal placeholder:text-muted outline-none focus:border-terracotta transition-colors"
               />
@@ -271,6 +298,18 @@ export default function PostRequestPage() {
                       step="0.01"
                       className="w-full bg-warm-white border border-sand rounded-xl px-4 py-3 text-charcoal placeholder:text-muted outline-none focus:border-terracotta transition-colors text-sm"
                     />
+                    {/* Price hint from historical data */}
+                    {item.name && (() => {
+                        const normalized = item.name.toLowerCase().trim().replace(/s$/, '')
+                        const match = Object.entries(locationPrices).find(([key]) => 
+                        key.includes(normalized) || normalized.includes(key)
+                        )
+                        return match ? (
+                        <p className="text-xs text-sage mt-1">
+                            💡 Usually ${match[1].toFixed(2)} at {locationName}
+                        </p>
+                        ) : null
+                    })()}
                   </div>
                 </div>
               </div>
@@ -331,12 +370,17 @@ export default function PostRequestPage() {
                 />
               </div>
               <p className="text-xs text-muted mt-1">
-                Suggested: {
-                  category === 'food' ? '$12 – $20' :
-                  category === 'grocery' ? '$15 – $25' :
-                  category === 'bar' ? '$20 – $40' : '$25 – $50'
+                {Object.keys(locationPrices).length > 0
+                    ? `Based on recent runs, items here typically cost $${
+                        Object.values(locationPrices).reduce((a, b) => a + b, 0).toFixed(2)
+                    } total`
+                    : `Suggested: ${
+                        category === 'food' ? '$12 – $20' :
+                        category === 'grocery' ? '$15 – $25' :
+                        category === 'bar' ? '$20 – $40' : '$25 – $50'
+                    }`
                 }
-              </p>
+                </p>
             </div>
 
             <div>

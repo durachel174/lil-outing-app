@@ -63,6 +63,12 @@ export default function ActiveRunPage() {
     const currentStep = RUNNER_STEPS.find(s => s.status === request.status)
     if (!currentStep?.next) { setUpdating(false); return }
 
+    // Price confirmation step before delivered
+    if (request.status === 'in_transit') {
+        router.push(`/request/${request.id}/prices`)
+        return
+    }
+
     const { error } = await supabase
         .from('requests')
         .update({ status: currentStep.next })
@@ -81,7 +87,6 @@ export default function ActiveRunPage() {
         to_status: currentStep.next,
     })
 
-    // Update local state immediately
     setRequest(prev => prev ? { ...prev, status: currentStep.next as any } : null)
     setUpdating(false)
     }

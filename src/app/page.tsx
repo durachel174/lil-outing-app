@@ -20,7 +20,7 @@ const categories: { key: Category | 'all'; label: string }[] = [
 export default function Home() {
   const router = useRouter()
   const { session, profile } = useAuth()
-  const [mode, setMode] = useState<'runner' | 'buyer'>('runner')
+  const [mode, setMode] = useState<'runner' | 'buyer'>('buyer')
   const [activeCategory, setActiveCategory] = useState<Category | 'all'>('all')
   const [requests, setRequests] = useState<Request[]>([])
   const [featuredSession, setFeaturedSession] = useState<RunnerSession | null>(null)
@@ -110,7 +110,7 @@ export default function Home() {
       {/* Mode toggle */}
       <div className="mx-6 mb-5 bg-cream rounded-2xl p-1 flex gap-1">
         <button
-          onClick={() => setMode('runner')}
+          onClick={() => session ? router.push('/session/new') : router.push('/login')}
           className={`flex-1 py-2.5 rounded-xl text-sm font-medium transition-all ${
             mode === 'runner' ? 'bg-charcoal text-cream shadow-sm' : 'text-muted'
           }`}
@@ -154,7 +154,12 @@ export default function Home() {
             >
               Hot right now
             </h3>
-            <span className="text-xs text-terracotta font-medium">See all</span>
+            <button
+              onClick={() => router.push('/runners')}
+              className="text-xs text-terracotta font-medium"
+            >
+              See all
+            </button>
           </div>
 
           <div className="bg-charcoal rounded-3xl p-6 relative overflow-hidden">

@@ -128,7 +128,7 @@ export default function Home() {
       </div>
 
       {/* Category pills */}
-      <div className="flex gap-2 px-6 mb-5 overflow-x-auto pb-1">
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide px-6 pr-6 pb-1 mb-4">        
         {categories.map((cat) => (
           <button
             key={cat.key}

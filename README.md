@@ -68,6 +68,7 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 - **Runner flow** — step-by-step active run tracker: claimed → active → in transit → delivered
 - **Profile page** — run history, request history, dual ratings, earnings stats
 - **Real-time updates** — Supabase Realtime subscriptions on feed and active run pages
+- **Proactive runner sessions** — runners announce where they're heading, buyers order directly into their session; both buyer-initiated and runner-initiated flows converge at the same request lifecycle
 
 ---
 
@@ -142,8 +143,6 @@ The platform auto-confirms delivery after 10 minutes to protect runners from buy
 
 ## What's next
 
-- [ ] Ratings flow — post-run ratings from both buyer and runner
-- [ ] Proactive runner sessions — "I'm heading to Arsicault, anyone need anything?"
 - [ ] Stripe escrow — hold buyer funds at claim, release at completion
 - [ ] Category-specific runner flows — bar/event line holding differs from food pickup
 - [ ] Messages — in-run chat between buyer and runner

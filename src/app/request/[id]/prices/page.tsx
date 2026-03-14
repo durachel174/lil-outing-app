@@ -25,6 +25,9 @@ export default function PriceConfirmPage() {
   const [manualItems, setManualItems] = useState<{ name: string; price: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [flaggedItems, setFlaggedItems] = useState<{ name: string; submitted: number; avg: number }[]>([])
+  const [showFraudWarning, setShowFraudWarning] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     fetchData()
@@ -65,70 +68,115 @@ export default function PriceConfirmPage() {
   }
 
   async function handleSubmit() {
-    if (!session || !request) return
-    setSubmitting(true)
+  if (!session || !request) return
+  setSubmitting(true)
+  setError('')
 
-    const locationName = normalizeLocationName(request.location_name)
+  const locationName = normalizeLocationName(request.location_name)
 
-    // Write prices to item_prices table
-    // Fetch existing items at this location for canonical matching
-    const { data: existingPrices } = await supabase
+  // Fetch existing prices for canonical matching + fraud detection
+  const { data: existingPrices } = await supabase
     .from('item_prices')
-    .select('item_name, item_name_normalized')
+    .select('item_name, item_name_normalized, price')
     .eq('location_name', locationName)
 
-    const existingItems = existingPrices ?? []
+  const existingItems = existingPrices ?? []
 
-    const priceRows = items.length > 0
+  // Build price rows
+  const priceRows = items.length > 0
     ? items
         .filter(item => item.actual_price && item.actual_price > 0)
         .map(item => {
-            const canonical = findCanonicalItem(item.item_name, existingItems)
-            return {
+          const canonical = findCanonicalItem(item.item_name, existingItems)
+          return {
             location_name: locationName,
             item_name: canonical ? canonical.item_name : item.item_name,
             item_name_normalized: canonical ? canonical.item_name_normalized : normalizeItemName(item.item_name),
-            price: item.actual_price,
+            price: item.actual_price as number,
             confirmed_by: session.user.id,
             request_id: id,
-            }
+          }
         })
     : manualItems
         .filter(item => item.name && item.price)
         .map(item => {
-            const canonical = findCanonicalItem(item.name, existingItems)
-            return {
+          const canonical = findCanonicalItem(item.name, existingItems)
+          return {
             location_name: locationName,
             item_name: canonical ? canonical.item_name : item.name,
             item_name_normalized: canonical ? canonical.item_name_normalized : normalizeItemName(item.name),
             price: parseFloat(item.price),
             confirmed_by: session.user.id,
             request_id: id,
-            }
+          }
         })
 
-    if (priceRows.length > 0) {
-      const { error: priceError } = await supabase.from('item_prices').insert(priceRows)
-        console.log('price insert error:', priceError)
-        console.log('price rows:', priceRows)
+  // Fraud detection — check each item against historical average
+  const FRAUD_THRESHOLD = 0.30 // 30% above average
+  const flagged: { name: string; submitted: number; avg: number }[] = []
+
+  for (const row of priceRows) {
+    const historicalPrices = existingItems
+      .filter(e => e.item_name_normalized === row.item_name_normalized)
+      .map(e => e.price)
+
+    if (historicalPrices.length >= 2) {
+      const avg = historicalPrices.reduce((a, b) => a + b, 0) / historicalPrices.length
+      const pctAbove = (row.price - avg) / avg
+
+      if (pctAbove > FRAUD_THRESHOLD) {
+        flagged.push({
+          name: row.item_name,
+          submitted: row.price,
+          avg: Math.round(avg * 100) / 100,
+        })
+      }
     }
-
-    // Advance request to delivered
-    await supabase
-      .from('requests')
-      .update({ status: 'delivered' })
-      .eq('id', request.id)
-
-    await supabase.from('request_events').insert({
-      request_id: id,
-      actor_id: session.user.id,
-      from_status: 'in_transit',
-      to_status: 'delivered',
-      note: `Runner confirmed prices: ${priceRows.map(p => `${p.item_name} $${p.price}`).join(', ')}`,
-    })
-
-    router.push(`/request/${id}/active`)
   }
+
+  // If flagged and not yet confirmed — show warning
+  if (flagged.length > 0 && !showFraudWarning) {
+    setFlaggedItems(flagged)
+    setShowFraudWarning(true)
+    setSubmitting(false)
+    return
+  }
+
+  // Write fraud flags to database if confirmed anyway
+  if (flagged.length > 0) {
+    await supabase.from('fraud_flags').insert(
+      flagged.map(f => ({
+        actor_id: session.user.id,
+        request_id: id,
+        flag_type: 'price_inflation',
+        note: `${f.name} submitted at $${f.submitted}, avg is $${f.avg} (${Math.round(((f.submitted - f.avg) / f.avg) * 100)}% above avg)`,
+        auto_detected: true,
+        reviewed: false,
+        resolved: false,
+      }))
+    )
+  }
+
+  // Insert price rows
+  const { error: priceError } = await supabase.from('item_prices').insert(priceRows)
+  console.log('price insert error:', priceError)
+
+  // Advance to delivered
+  await supabase
+    .from('requests')
+    .update({ status: 'delivered' })
+    .eq('id', request.id)
+
+  await supabase.from('request_events').insert({
+    request_id: id,
+    actor_id: session.user.id,
+    from_status: 'in_transit',
+    to_status: 'delivered',
+    note: `Runner confirmed prices: ${priceRows.map(p => `${p.item_name} $${p.price}`).join(', ')}`,
+  })
+
+  router.push(`/request/${id}/active`)
+}
 
   const total = items.length > 0
     ? items.reduce((sum, item) => sum + (item.actual_price ?? 0), 0)
@@ -240,12 +288,47 @@ export default function PriceConfirmPage() {
           </p>
         </div>
 
+        {/* Fraud warning */}
+        {showFraudWarning && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5">
+            <p className="text-sm font-medium text-amber-800 mb-2">⚠️ Prices seem high</p>
+            <p className="text-xs text-amber-700 mb-3">
+              These prices are significantly above what other runners have reported:
+            </p>
+            <div className="flex flex-col gap-2 mb-4">
+              {flaggedItems.map(item => (
+                <div key={item.name} className="flex justify-between text-xs text-amber-800">
+                  <span>{item.name}</span>
+                  <span>
+                    You entered <strong>${item.submitted}</strong> · avg is <strong>${item.avg}</strong>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-amber-600">
+              If these prices are correct, tap confirm below. This will be reviewed.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="bg-red-50 rounded-2xl p-4">
+            <p className="text-red-600 text-sm">{error}</p>
+          </div>
+        )}
+
         <button
           onClick={handleSubmit}
           disabled={submitting}
-          className="w-full bg-charcoal text-cream py-4 rounded-2xl font-medium text-sm disabled:opacity-40"
+          className={`w-full py-4 rounded-2xl font-medium text-sm disabled:opacity-40 ${
+            showFraudWarning
+              ? 'bg-amber-500 text-white'
+              : 'bg-charcoal text-cream'
+          }`}
         >
-          {submitting ? 'Confirming...' : 'Confirm prices & mark delivered →'}
+          {submitting ? 'Confirming...' : showFraudWarning
+            ? 'Yes, these prices are correct →'
+            : 'Confirm prices & mark delivered →'}
         </button>
 
         <button

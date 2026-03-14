@@ -36,13 +36,13 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 **For buyers**
 - Post a request — food pickup, grocery run, bar line, event queue
 - Set an offer amount and spending cap
-- See runners already heading to that location
+- See price hints based on what runners have actually paid at that location
 - Track the run in real time
 
 **For runners**
 - Browse open requests near where you're already going
 - Claim a run with one tap
-- Walk through a step-by-step flow: check in → get items → deliver
+- Walk through a step-by-step flow: check in → get items → confirm prices → deliver
 - Earn money for errands you were already running
 
 ---
@@ -54,6 +54,7 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 | Framework | Next.js 15 (App Router, TypeScript) |
 | Styling | Tailwind CSS v4 |
 | Backend | Supabase (Postgres + Realtime + Auth) |
+| Fuzzy matching | Fuse.js |
 | Payments | Stripe (planned) |
 | Deployment | Vercel |
 
@@ -63,12 +64,41 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 
 - **Auth** — email/password signup and login with Supabase Auth, persistent sessions via localStorage
 - **Home feed** — real-time request feed with category filtering and runner/buyer mode toggle
-- **Post a request** — 4-step flow: category → location + details → item list → offer amount
-- **Request detail** — full request info, buyer profile, estimated cost, claim button
-- **Runner flow** — step-by-step active run tracker: claimed → active → in transit → delivered
+- **Post a request** — 4-step flow with live price hints from crowdsourced history
+- **Proactive runner sessions** — runners announce where they're heading, buyers order directly into their session
+- **Runner flow** — step-by-step active run tracker: claimed → active → in transit → price confirmation → delivered
+- **Crowdsourced pricing** — every run contributes to a hyperlocal price database; fuzzy matching resolves item name variants
+- **Fraud detection** — auto-flags price inflation 30%+ above historical average, requires explicit runner confirmation
+- **Ratings flow** — post-run ratings from both sides with weighted average seeded at 5.0
 - **Profile page** — run history, request history, dual ratings, earnings stats
 - **Real-time updates** — Supabase Realtime subscriptions on feed and active run pages
-- **Proactive runner sessions** — runners announce where they're heading, buyers order directly into their session; both buyer-initiated and runner-initiated flows converge at the same request lifecycle
+
+---
+
+## Crowdsourced pricing pipeline
+
+This is the feature that makes Lil Outing defensible over time.
+
+After every completed run, the runner confirms what they actually spent on each item. Those prices feed an append-only `item_prices` table. When a buyer posts a new request at the same location, they see: *"💡 Usually $7.00 at Arsicault Bakery."*
+
+The pipeline has three layers:
+
+**1. Normalization**
+Location names and item names are normalized before storage — "Arsicault Bakery", "arsicault", "Arsicault" all resolve to the same key. Item names go through a custom normalizer that handles plurals, abbreviations, and common variants ("choco chip cookie" → "chocolate chip cookie").
+
+**2. Fuzzy matching with Fuse.js**
+New item names are matched against existing canonical names using Fuse.js with a 0.35 similarity threshold. If a match is found, the new price is attributed to the canonical item — keeping the dataset clean without requiring runners to type exactly.
+
+**3. Fraud detection**
+When a runner submits a price more than 30% above the historical average for that item at that location, the app surfaces a warning: *"You entered $20 · avg is $7 (186% above avg)."* The runner must explicitly confirm before proceeding. The submission is written to `fraud_flags` with the full percentage delta for review.
+
+The data compounds with every run:
+```
+Week 1:   ~50 records    → suggestions for popular spots
+Month 1:  ~500 records   → solid Inner Richmond + Mission coverage  
+Month 3:  ~5,000 records → citywide with high confidence
+Year 1:   ~50,000 records → most accurate hyperlocal food DB in Bay Area
+```
 
 ---
 
@@ -87,7 +117,7 @@ Both buyer-initiated and runner-initiated requests converge at CLAIMED and follo
 | CLAIMED | Runner claims | Removed from feed, Stripe holds payment |
 | ACTIVE | Runner GPS check-in | Buyer notified, price confirmation step |
 | IN_TRANSIT | Runner taps "On my way" | ETA shown to buyer |
-| DELIVERED | Runner marks delivered | 10-min auto-confirm window starts |
+| DELIVERED | Runner confirms prices + marks delivered | 10-min auto-confirm window starts |
 | COMPLETED | Buyer confirms or auto-confirm | Escrow releases, ratings prompted |
 | EXPIRED | No runner before expiry | Full refund, no charge |
 
@@ -105,9 +135,9 @@ Both buyer-initiated and runner-initiated requests converge at CLAIMED and follo
 - `messages` — in-run chat between buyer and runner
 - `ratings` — post-run ratings from both sides
 - `transactions` — Stripe escrow tracking
-- `item_prices` — crowdsourced price history by location
+- `item_prices` — crowdsourced price history by location (append-only)
 - `location_limits` — crowdsourced per-person purchase limits (e.g. Arsicault: 2 croissants max)
-- `fraud_flags` — automated + manual fraud detection
+- `fraud_flags` — automated + manual fraud detection with full audit notes
 
 ---
 
@@ -122,11 +152,14 @@ A single shared client instance exported from `lib/supabase.ts` prevents the "Mu
 **Append-only event log**
 `request_events` never deletes or updates — every status change, check-in, and note is a new row. This makes disputes easy to resolve and gives a full evidence trail for every transaction. Reviewable years later.
 
-**Crowdsourced data compounds over time**
-Three append-only tables (`item_prices`, `location_limits`, `request_events`) get more valuable with every completed run. After a year of runs Lil Outing would have the most accurate hyperlocal food price database in the Bay Area — something no competitor can replicate without the run history.
+**Crowdsourced data as a moat**
+Three append-only tables (`item_prices`, `location_limits`, `request_events`) get more valuable with every completed run. A competitor can copy the UI in a weekend. They can't copy two years of confirmed price data.
 
 **Trust biased toward runners**
-The platform auto-confirms delivery after 10 minutes to protect runners from buyers who ghost. GPS logs, photos, and chat timestamps are auto-evaluated on disputes. Supply-side trust is existential — if runners don't feel protected, there's no marketplace.
+The platform auto-confirms delivery after 10 minutes to protect runners from buyers who ghost. Supply-side trust is existential — if runners don't feel protected, there's no marketplace.
+
+**Auth race condition handling**
+Supabase auth state fires before database writes complete on signup. `AuthContext.fetchProfile` retries up to 3 times with 800ms delays — the profile row is always ready by the third attempt.
 
 ---
 
@@ -135,21 +168,39 @@ The platform auto-confirms delivery after 10 minutes to protect runners from buy
 | Attack | Mitigation |
 |---|---|
 | Runner disappears with money | Stripe escrow — runner never paid until delivery confirmed |
-| Fake price inflation | Crowdsourced price baseline + 30% outlier detection |
-| Buyer claims non-delivery | GPS at delivery address + delivery photo + auto-confirm |
+| Fake price inflation | Crowdsourced baseline + 30% outlier detection + explicit confirmation required |
+| Buyer claims non-delivery | GPS at delivery address + delivery photo + 10-min auto-confirm |
 | New account abuse | First-run cap: max $30 total until 3 clean completions |
+| Coordinated fraud | Device fingerprint + mutual transaction pattern flags |
 
 ---
 
 ## What's next
 
 - [ ] Stripe escrow — hold buyer funds at claim, release at completion
-- [ ] Category-specific runner flows — bar/event line holding differs from food pickup
 - [ ] Messages — in-run chat between buyer and runner
+- [ ] Category-specific runner flows — bar/event line holding differs from food pickup
+- [ ] Purchase limit enforcement — block orders that exceed crowdsourced per-person limits
+- [ ] Request expiry cron — Supabase scheduled function to auto-expire stale requests
 - [ ] React Native app — web is mobile-first but native makes more sense long term
 
 ---
 
+## Portfolio context
+
+> *"Ovn taught me how to build a marketplace. Lil Outing taught me how to make one people actually trust."*
+
+| Ovn | Lil Outing |
+|---|---|
+| Email auth | Supabase Auth + session management |
+| Static listings | Real-time 7-state machine |
+| No payments | Stripe escrow flow |
+| Single role | Dual role, single unified flow |
+| No disputes | Full trust & safety system |
+| Simple schema | Event sourcing + crowdsourced data pipeline |
+| No data strategy | Append-only price DB with fuzzy matching + fraud detection |
+
+---
 
 ## Running locally
 

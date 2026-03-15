@@ -31,7 +31,7 @@ export default function PostRequestPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [locationPrices, setLocationPrices] = useState<Record<string, number>>({})
-
+  const [locationLimits, setLocationLimits] = useState<any[]>([])
   
 
   function addItem() {
@@ -70,6 +70,23 @@ export default function PostRequestPage() {
         setLocationPrices(avgMap)
     }
     }
+
+    async function fetchLocationLimits(location: string) {
+  if (!location) return
+  try {
+    const res = await fetch('/api/location-limits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ locationName: location }),
+    })
+    const data = await res.json()
+    if (data.limits && data.limits.length > 0) {
+      setLocationLimits(data.limits)
+    }
+  } catch (e) {
+    console.log('location limits fetch failed:', e)
+  }
+}
 
   async function handleSubmit() {
     if (!session) {
@@ -240,18 +257,38 @@ export default function PostRequestPage() {
             </div>
 
             <button
-              onClick={() => setStep(category === 'food' ? 'items' : 'offer')}
-              disabled={!locationName}
-              className="w-full bg-charcoal text-cream py-4 rounded-2xl font-medium text-sm disabled:opacity-40 mt-2"
-            >
-              Continue →
-            </button>
+                onClick={() => {
+                    fetchLocationLimits(locationName)
+                    setStep(category === 'food' ? 'items' : 'offer')
+                }}
+                disabled={!locationName}
+                className="w-full bg-charcoal text-cream py-4 rounded-2xl font-medium text-sm disabled:opacity-40 mt-2"
+                >
+                Continue →
+                </button>
           </div>
         )}
 
         {/* STEP 3 — Items (food only) */}
         {step === 'items' && (
           <div className="flex flex-col gap-4">
+            {/* Location limits warning */}
+            {locationLimits.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                <p className="text-sm font-medium text-amber-800 mb-2">⚠️ Purchase limits at {locationName}</p>
+                <div className="flex flex-col gap-1">
+                {locationLimits.map((limit, i) => (
+                    <p key={i} className="text-xs text-amber-700">
+                    • {limit.item_name_normalized ?? 'All items'}: max {limit.limit_per_person} per person
+                    {limit.limit_notes ? ` — ${limit.limit_notes}` : ''}
+                    </p>
+                ))}
+                </div>
+                <p className="text-xs text-amber-500 mt-2">
+                {locationLimits[0]?.source === 'gemini' ? 'Based on reported policies — runners will confirm' : 'Confirmed by runners'}
+                </p>
+            </div>
+            )}
             <p className="text-sm text-muted">
               List what you need — the runner will confirm actual prices at the location.
             </p>

@@ -35,13 +35,13 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 
 **For buyers**
 - Post a request — food pickup, grocery run, bar line, event queue
-- Set an offer amount and spending cap
 - See price hints based on what runners have actually paid at that location
+- Get warned about purchase limits before ordering too many items
 - Track the run in real time
 
 **For runners**
 - Browse open requests near where you're already going
-- Claim a run with one tap
+- Announce where you're heading — buyers order directly into your session
 - Walk through a step-by-step flow: check in → get items → confirm prices → deliver
 - Earn money for errands you were already running
 
@@ -55,6 +55,7 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 | Styling | Tailwind CSS v4 |
 | Backend | Supabase (Postgres + Realtime + Auth) |
 | Fuzzy matching | Fuse.js |
+| AI seeding | Google Gemini API |
 | Payments | Stripe (planned) |
 | Deployment | Vercel |
 
@@ -64,11 +65,13 @@ No dedicated, real-time, hyper-local, mobile-first platform exists for the Bay A
 
 - **Auth** — email/password signup and login with Supabase Auth, persistent sessions via localStorage
 - **Home feed** — real-time request feed with category filtering and runner/buyer mode toggle
-- **Post a request** — 4-step flow with live price hints from crowdsourced history
+- **Post a request** — 4-step flow with live price hints and purchase limit warnings from crowdsourced history
 - **Proactive runner sessions** — runners announce where they're heading, buyers order directly into their session
 - **Runner flow** — step-by-step active run tracker: claimed → active → in transit → price confirmation → delivered
 - **Crowdsourced pricing** — every run contributes to a hyperlocal price database; fuzzy matching resolves item name variants
+- **Purchase limit warnings** — Gemini seeds known limits for new locations; runners confirm and correct over time
 - **Fraud detection** — auto-flags price inflation 30%+ above historical average, requires explicit runner confirmation
+- **Request expiry cron** — pg_cron job runs every 5 minutes and auto-expires stale open requests, keeping the feed clean
 - **Ratings flow** — post-run ratings from both sides with weighted average seeded at 5.0
 - **Profile page** — run history, request history, dual ratings, earnings stats
 - **Real-time updates** — Supabase Realtime subscriptions on feed and active run pages
@@ -81,7 +84,7 @@ This is the feature that makes Lil Outing defensible over time.
 
 After every completed run, the runner confirms what they actually spent on each item. Those prices feed an append-only `item_prices` table. When a buyer posts a new request at the same location, they see: *"💡 Usually $7.00 at Arsicault Bakery."*
 
-The pipeline has three layers:
+The pipeline has four layers:
 
 **1. Normalization**
 Location names and item names are normalized before storage — "Arsicault Bakery", "arsicault", "Arsicault" all resolve to the same key. Item names go through a custom normalizer that handles plurals, abbreviations, and common variants ("choco chip cookie" → "chocolate chip cookie").
@@ -92,10 +95,13 @@ New item names are matched against existing canonical names using Fuse.js with a
 **3. Fraud detection**
 When a runner submits a price more than 30% above the historical average for that item at that location, the app surfaces a warning: *"You entered $20 · avg is $7 (186% above avg)."* The runner must explicitly confirm before proceeding. The submission is written to `fraud_flags` with the full percentage delta for review.
 
+**4. AI-assisted seeding with Gemini**
+When a buyer posts a request at a location Lil Outing has never seen before, the app automatically queries Google Gemini to seed any known purchase limits for that location. Gemini's response is stored with `source: 'gemini'` and `confidence: 'low'` — it serves as a starting point until runners confirm or correct it from the ground. This means new locations aren't blank slates on day one, and the community data layer starts with something to validate against rather than nothing.
+
 The data compounds with every run:
 ```
 Week 1:   ~50 records    → suggestions for popular spots
-Month 1:  ~500 records   → solid Inner Richmond + Mission coverage  
+Month 1:  ~500 records   → solid Inner Richmond + Mission coverage
 Month 3:  ~5,000 records → citywide with high confidence
 Year 1:   ~50,000 records → most accurate hyperlocal food DB in Bay Area
 ```
@@ -119,7 +125,7 @@ Both buyer-initiated and runner-initiated requests converge at CLAIMED and follo
 | IN_TRANSIT | Runner taps "On my way" | ETA shown to buyer |
 | DELIVERED | Runner confirms prices + marks delivered | 10-min auto-confirm window starts |
 | COMPLETED | Buyer confirms or auto-confirm | Escrow releases, ratings prompted |
-| EXPIRED | No runner before expiry | Full refund, no charge |
+| EXPIRED | pg_cron fires every 5 min | Auto-expired, full refund |
 
 ---
 
@@ -136,7 +142,7 @@ Both buyer-initiated and runner-initiated requests converge at CLAIMED and follo
 - `ratings` — post-run ratings from both sides
 - `transactions` — Stripe escrow tracking
 - `item_prices` — crowdsourced price history by location (append-only)
-- `location_limits` — crowdsourced per-person purchase limits (e.g. Arsicault: 2 croissants max)
+- `location_limits` — crowdsourced + Gemini-seeded per-person purchase limits
 - `fraud_flags` — automated + manual fraud detection with full audit notes
 
 ---
@@ -155,11 +161,17 @@ A single shared client instance exported from `lib/supabase.ts` prevents the "Mu
 **Crowdsourced data as a moat**
 Three append-only tables (`item_prices`, `location_limits`, `request_events`) get more valuable with every completed run. A competitor can copy the UI in a weekend. They can't copy two years of confirmed price data.
 
+**Request expiry via pg_cron**
+Rather than handling expiry in the application layer (which would require a running server process), expiry is handled by a pg_cron job directly in Postgres. Every 5 minutes it marks any open request past its `expires_at` as `expired`. This is more reliable than a Node.js cron — it runs even if the app server is down, and it's a single SQL statement with no external dependencies.
+
 **Trust biased toward runners**
 The platform auto-confirms delivery after 10 minutes to protect runners from buyers who ghost. Supply-side trust is existential — if runners don't feel protected, there's no marketplace.
 
 **Auth race condition handling**
 Supabase auth state fires before database writes complete on signup. `AuthContext.fetchProfile` retries up to 3 times with 800ms delays — the profile row is always ready by the third attempt.
+
+**Hybrid AI + community data for location limits**
+Gemini bootstraps purchase limit data for new locations using its training knowledge. Runner confirmations then validate or correct it. The two sources have explicit trust levels in the database (`source: 'gemini'` vs `source: 'runner'`, `confidence: 'low'` vs `confidence: 'high'`) so the app always knows how much to trust any given data point.
 
 ---
 
@@ -177,11 +189,10 @@ Supabase auth state fires before database writes complete on signup. `AuthContex
 
 ## What's next
 
+- [ ] Runner location limit survey — post-run prompt for runners to confirm or correct Gemini-seeded limits
 - [ ] Stripe escrow — hold buyer funds at claim, release at completion
 - [ ] Messages — in-run chat between buyer and runner
 - [ ] Category-specific runner flows — bar/event line holding differs from food pickup
-- [ ] Purchase limit enforcement — block orders that exceed crowdsourced per-person limits
-- [ ] Request expiry cron — Supabase scheduled function to auto-expire stale requests
 - [ ] React Native app — web is mobile-first but native makes more sense long term
 
 ---
@@ -198,7 +209,7 @@ Supabase auth state fires before database writes complete on signup. `AuthContex
 | Single role | Dual role, single unified flow |
 | No disputes | Full trust & safety system |
 | Simple schema | Event sourcing + crowdsourced data pipeline |
-| No data strategy | Append-only price DB with fuzzy matching + fraud detection |
+| No data strategy | Append-only price DB with fuzzy matching + fraud detection + AI seeding |
 
 ---
 
@@ -214,6 +225,7 @@ Create `.env.local`:
 ```
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 ```bash
